@@ -1,0 +1,4 @@
+gmusicapi
+spotipy
+num2words
+python-dotenv

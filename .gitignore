@@ -9,3 +9,6 @@ __pycache__/
 
 # Ignore the error log
 error-log.txt
+found-log.txt
+.env
+/venv
