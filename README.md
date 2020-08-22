@@ -8,7 +8,7 @@ This modified version from the [original](https://github.com/gzinck/Gooify) will
 
 - pip install -r requirements.txt
 - cp .env.dist .env
-- Add your spotify client info to .env and set your usernames
+- Add your [spotify client info](https://developer.spotify.com/) to .env and set your usernames
 - python main.py
 - Boom!
 - Otherwise check out the code, there is a bit of a mess, but should easy to modify and do what you want with.
