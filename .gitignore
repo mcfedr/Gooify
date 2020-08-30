@@ -8,7 +8,6 @@ __pycache__/
 .DS_Store
 
 # Ignore the error log
-error-log.txt
-found-log.txt
+actions.log
 .env
 /venv

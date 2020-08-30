@@ -1,66 +1,69 @@
 import os
-from gmusicapi import Mobileclient
-import pickle
+import csv
 
-class GMusicClient:
+class GoogleMusicTakeoutClient:
     def __init__(self):
-        """
-        This connects to the google music server by requesting credentials.
-        """
-        self.api = Mobileclient()
-
-        # username = input('Type your Google Play Music email below.\n--> ')
-        self.username = os.getenv('GOOGLE_USERNAME')
-        dir_path = os.path.dirname(os.path.realpath(__file__)) + '/.cache-gmusic-' + ''.join(filter(str.isalpha, self.username))
-        # Check if already authenticated
-        if(not os.path.isfile(dir_path)):
-            self.api.perform_oauth(open_browser=True, storage_filepath=dir_path)
-
-        # Attempt to log in; if fail, get new token.
-        try:
-            self.api.oauth_login(Mobileclient.FROM_MAC_ADDRESS, oauth_credentials=dir_path)
-        except:
-            self.api.perform_oauth(open_browser=True, storage_filepath=dir_path)
-            self.api.oauth_login(Mobileclient.FROM_MAC_ADDRESS, oauth_credentials=dir_path)
-
-        print('Connected to GMusic')
+        self.dir = os.getenv('GOOGLE_TAKEOUT_DIR')
 
     def get_playlists(self):
         """
         Gets all the playlists in Google Play Music. Some may not actually
         have any music, but they will be processed anyways.
         """
-        playlists_cache_path = os.path.dirname(os.path.realpath(__file__)) + '/.cache-playlists_cache-' + ''.join(filter(str.isalpha, self.username))
-        if (os.path.isfile(playlists_cache_path)):
-            with open(playlists_cache_path, 'rb') as playlists_cache_file:
-                playlists = pickle.load(playlists_cache_file)
-        else:
-            print('Requesting Google playlists')
-            playlistsG = self.api.get_all_user_playlist_contents()
-            print('Received Google playlists, we have', len(playlistsG), 'playlists')
-            playlists = Playlists(playlistsG)
-            with open(playlists_cache_path, 'wb') as playlists_cache_file:
-                pickle.dump(playlists, playlists_cache_file)
 
-        return playlists
+        lists = []
+        for playlistDir in os.listdir(self.dir + '/Playlists'):
+            if playlistDir.startswith('.'):
+                continue
+            if playlistDir.lower() == 'thumbs up':
+                continue
+            playlistName = self.name_from_metadata(self.dir + '/Playlists/' + playlistDir + '/Metadata.csv')
+            if playlistName is None:
+                continue
+            tracks = []
+            for trackFile in os.listdir(self.dir + '/Playlists/' + playlistDir + '/Tracks'):
+                if trackFile.startswith('.'):
+                    continue
+                track = self.track_from_file(self.dir + '/Playlists/' + playlistDir + '/Tracks/' + trackFile)
+                if track is None:
+                    continue
+                tracks.append(track)
+            lists.append(Playlist(playlistName, tracks))
+
+        return Playlists(lists)
+
+    def name_from_metadata(self, path):
+        with open(path, newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                return row['Title']
+        return None
+
+    def track_from_file(self, path):
+        with open(path, newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                if row['Removed'] == 'Yes':
+                    return None
+                if row['Title'] == '' or row['Album'] == '' or row['Artist'] == '':
+                    return None
+                return { "title" : row['Title'], "album" : row['Album'], "artist" : row['Artist'], "deleted" : False, 'playCount' : row['Play Count'] }
+        return None
 
     def get_all_songs(self):
         """
         Gets the entire Google library for adding to the
         """
-        lib_cache_path = os.path.dirname(os.path.realpath(__file__)) + '/.cache-lib_cache-' + ''.join(filter(str.isalpha, self.username))
-        if (os.path.isfile(lib_cache_path)):
-            with open(lib_cache_path, 'rb') as lib_cache_file:
-                library = pickle.load(lib_cache_file)
-        else:
-            print('Requesting Google library')
-            librarySongs = self.api.get_all_songs()
-            print('Received Google library, we have', len(librarySongs), 'songs')
-            library = MusicLibrary(librarySongs)
-            with open(lib_cache_path, 'wb') as lib_cache_file:
-                pickle.dump(library, lib_cache_file)
+        tracks = []
+        for trackFile in os.listdir(self.dir + '/Tracks'):
+            if trackFile.startswith('.'):
+                continue
+            track = self.track_from_file(self.dir + '/Tracks/' + trackFile)
+            if track is None:
+                continue
+            tracks.append(track)
 
-        return library
+        return MusicLibrary(tracks)
 
 class Playlists:
     """
@@ -72,8 +75,7 @@ class Playlists:
         Creates a new playlist object
         """
         self.playlists = []
-        for l in lists:
-            plist = Playlist(l)
+        for plist in lists:
             # Only add it if it has songs
             if(plist.has_songs()):
                 self.playlists.append(plist)
@@ -106,17 +108,13 @@ class Playlist:
     A Playlist is an iterable object that goes through all
     the songs in the playlist. It also has an associated name.
     """
-    def __init__(self, plist):
+    def __init__(self, name, tracks):
         """
         Creates a new playlist from an incomplete list from Google's
         servers, which is a disorganized pile of junk.
         """
-        self.tracks = []
-        self.name = plist['name']
-        for t in plist['tracks']:
-            # Ensures that the track has info attached
-            if('track' in t):
-                self.tracks.append(t['track'])
+        self.name = name
+        self.tracks = tracks
         self.index = 0
 
     def get_name(self):

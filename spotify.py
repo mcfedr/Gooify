@@ -1,5 +1,7 @@
 import sys
 import os
+import time
+
 import spotipy
 import spotipy.util as util
 from num2words import num2words
@@ -14,7 +16,6 @@ class SpotifyClient:
         
         # username = input('Type your Spotify username below.\n--> ')
         username = os.getenv('SPOTIFY_USERNAME')
-        # username = 'lz4c8n9p2za76s4q24ee3b4fk'
 
         # If used an old scope, we might have to delete the cache
         dir_path = os.path.dirname(os.path.realpath(__file__)) + '/.cache-spotify' + username
@@ -65,33 +66,26 @@ class SpotifyClient:
                 return lst['id']
         return None
 
-    def add_song_to_playlist(self, playlist_id, track):
+    def add_song_to_playlist_uris(self, playlist_id, uris, repeat=True):
         """
         Adds a song to a playlist, specified by its Spotify id.
         """
         usr = self.api.current_user()['id']
-        uri = self.get_uri(track)
-        if(uri == None):
-            return False
-        else:
-            self.api.user_playlist_add_tracks(user=usr, playlist_id=playlist_id, tracks=[uri])
-            print('Added to playlist', playlist_id)
-            return True
+        try:
+            self.api.user_playlist_add_tracks(user=usr, playlist_id=playlist_id, tracks=uris)
+        except spotipy.SpotifyException as e:
+            if e.http_status == 429 and repeat:
+                print('Spotify rate limit', e.headers['Retry-After'])
+                time.sleep(e.headers['Retry-After'] if 'Retry-After' in e.headers and e.headers['Retry-After'] < 120 else 30)
+                return self.add_song_to_playlist_uris(playlist_id, uris, False)
+            raise e
 
-    def add_album_uri(self, uri):
-        """
-        Adds a track to the Spotify account. Returns if it was
-        successfully found on Spotify.
-        """
-        # Check if the song is already in the library
-        if self.api.current_user_saved_albums_contains([uri])[0]:
-            print('Album already in library')
-        else:
-            self.api.current_user_saved_albums_add([uri])
-            print('Added to library')
-        return True
+    def replace_songs_to_playlist_uris(self, id, uris):
+        usr = self.api.current_user()['id']
 
-    def get_album_uri(self, track):
+        self.api.user_playlist_replace_tracks(usr, id, uris)
+
+    def get_song_uri(self, track):
         """
         Gets the Spotify URI for the tracks
             return: the Spotify URI
@@ -102,17 +96,15 @@ class SpotifyClient:
         albumname = track['album'].replace("'", "")
 
         # Find the song on spotify
-        song = self.find_album(trackname, artistname, albumname)
+        song = self.find_song(trackname, artistname, albumname)
 
         # If no result, say so.
         if(song == None):
-            print('Could not find', albumname, 'by', artistname)
             return None
         else:
-            print('Found', song['name'])
             return song['uri']
 
-    def find_album(self, trackname, artistname, albumname):
+    def find_song(self, trackname, artistname, albumname):
         """
         Finds a song from Spotify based on the track name and
         artist name. It will shorten the names in order to find
@@ -128,76 +120,111 @@ class SpotifyClient:
         trackname = trackname.translate(translation_table)
         albumname = albumname.translate(translation_table)
 
-        # string = "track:" + trackname
+        string = "track:" + trackname
+        string += " artist:" + artistname
+        string += " album:" + albumname
+        results = self.api.search(q=string, type='track', limit=1)
+        items = results['tracks']['items']
+
+        if (len(items) == 0):
+            return None
+        else:
+            return items[0]
+
+    def add_album_uris(self, uris):
+        """
+        Adds a track to the Spotify account. Returns if it was
+        successfully found on Spotify.
+        """
+        self.api.current_user_saved_albums_add(uris)
+
+    def get_album_uri(self, track):
+        """
+        Gets the Spotify URI for the tracks
+            return: the Spotify URI
+        """
+        # Get the song info from Google
+        artistname = track['artist'].replace("'", "")
+        albumname = track['album'].replace("'", "")
+
+        # Find the song on spotify
+        song = self.find_album(artistname, albumname)
+
+        # If no result, say so.
+        if(song == None):
+            return None
+        else:
+            return song['uri']
+
+    def find_album(self, artistname, albumname):
+        """
+        Finds a song from Spotify based on the track name and
+        artist name. It will shorten the names in order to find
+        the closest match, since many will not fit exactly.
+            return: Spotify song object
+        """
+        # Fix the artist name
+        artistname = artistname.replace('and', ' ')
+
+        # Fix the title
+        translation_table = dict.fromkeys(map(ord, ';/"()&'), ' ')
+        artistname = artistname.translate(translation_table)
+        albumname = albumname.translate(translation_table)
+
         string = "artist:" + artistname
         string += " album:" + albumname
         results = self.api.search(q=string, type='album', limit=1)
         items = results['albums']['items']
-
-        # Shorten the track name until we find a result
-        # if(len(items) == 0):
-        #     items = self.find_by_replace_numbers(trackname, artistname, albumname)
-        #
-        # # Shorten the artist name until we find a result (if no success before)
-        # if(len(items) == 0):
-        #     items = self.find_by_shorter_artist(trackname, artistname, albumname)
-        #
-        # # Try again without any album name
-        # if(len(items) == 0):
-        #     items = self.find_by_shorter_track(trackname, artistname)
-        # if(len(items) == 0):
-        #     items = self.find_by_shorter_artist(trackname, artistname)
 
         if(len(items) == 0):
             return None
         else:
             return items[0]
 
-    def find_by_shorter_track(self, trackname, artistname, albumname=None):
+    def add_artist_uris(self, uris):
+        """
+        Adds a track to the Spotify account. Returns if it was
+        successfully found on Spotify.
+        """
+        self.api.user_follow_artists(uris)
+
+    def get_artist_uri(self, track):
+        """
+        Gets the Spotify URI for the tracks
+            return: the Spotify URI
+        """
+        # Get the song info from Google
+        artistname = track['artist'].replace("'", "")
+
+        # Find the song on spotify
+        song = self.find_arist(artistname)
+
+        # If no result, say so.
+        if(song == None):
+            return None
+        else:
+            return song['uri']
+
+    def find_arist(self, artistname):
         """
         Finds a song from Spotify based on the track name and
-        artist name, shortening the track name incrementally
-        until it finds a track.
-            return: list of results, which may be empty
+        artist name. It will shorten the names in order to find
+        the closest match, since many will not fit exactly.
+            return: Spotify song object
         """
-        placeToEnd = len(trackname)
-        track = trackname
-        items = []
+        # Fix the artist name
+        artistname = artistname.replace('and', ' ')
 
-        while(placeToEnd != -1 and len(items) == 0):
-            track = track[:placeToEnd]
-            string = "track:" + trackname + " artist:" + artistname
-            if(albumname != None):
-                string += " album:" + albumname
-            results = self.api.search(q=string, type='track', limit=1)
-            items = results['tracks']['items']
-            placeToEnd = track.rfind(' ')
-        return items
+        # Fix the title
+        translation_table = dict.fromkeys(map(ord, ';/"()&'), ' ')
+        artistname = artistname.translate(translation_table)
 
-    def find_by_shorter_artist(self, trackname, artistname, albumname=None):
-        """
-        Finds a song from Spotify based on the track name and
-        artist name, shortening the artist name incrementally
-        until it finds a track.
-            return: list of results, which may be empty
-        """
-        placeToEnd = len(trackname)
-        artist = artistname
-        items = []
+        string = "artist:" + artistname
+        results = self.api.search(q=string, type='artist', limit=1)
+        items = results['artists']['items']
 
-        while(placeToEnd != -1 and len(items) == 0):
-            artist = artist[:placeToEnd]
-            string = "track:" + trackname + " artist:" + artistname
-            if(albumname != None):
-                string += " album:" + albumname
-            results = self.api.search(q=string, type='track', limit=1)
-            items = results['tracks']['items']
-            placeToEnd = artist.rfind(' ')
+        if(len(items) == 0):
+            return None
+        else:
+            return items[0]
 
-        # Case where there is a Various Artists artist
-        if(len(items) == 0 and albumname != None):
-            string = "track:" + trackname + " album:" + albumname
-            results = self.api.search(q=string, type='track', limit=1)
-            items = results['tracks']['items']
-            
-        return items
